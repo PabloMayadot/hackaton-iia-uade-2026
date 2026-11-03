@@ -1,9 +1,12 @@
 # T20 · ¿Esta entrega falla por ausente?
 
+> **Sobre este proyecto (Case Study · Hackatón IIA UADE 2026):** Diseño, evaluación e implementación reproducible de un clasificador heurístico sensible al costo (*Cost-Sensitive Rule Engine*) para anticipar entregas fallidas por domicilio ausente en logística de última milla. Incluye script de verificación automatizada y análisis de sensibilidad de umbrales en Python con tipado estricto ([`evaluate.py`](evaluate.py)).
+
 **Integrantes:** Pablo Mayadot · Ignacio Sánchez
 **IA declarada:** Claude
 **Pista:** Reglas
 **Publicación en LinkedIn:** https://lnkd.in/p/dhdu45p2
+
 ---
 
 ## 1. Formulación y PEAS
@@ -46,11 +49,12 @@ El sistema utiliza **las tres variables disponibles en la ficha** y **no descart
    - **`Entregas fallidas previas (del cliente)`:** Permite distinguir, dentro del grupo de entregas matutinas sin confirmación de WhatsApp (`WhatsApp = 0` y `Franja = 0`), a los clientes que habitualmente están en su domicilio (Casos 3, 5 y 7, con `1`, `2` y `0` fallidas previas respectivamente, que dan todos `0`) de los clientes crónicamente ausentes (Casos 1 y 6, con `4` y `5` fallidas previas, que dan `1`). Si descartáramos esta variable, reprogramaríamos por error los Casos 3, 5 y 7.
 
 **Cómo se corre en vivo.**
-Para resolver cualquier caso nuevo en la mesa en menos de 5 segundos (a mano o en planilla):
+Para resolver cualquier caso nuevo en la mesa en menos de 5 segundos (a mano, en planilla o en Python):
 1. **Paso 1 (Filtro WhatsApp):** Mirar `Respondió el aviso por WhatsApp`. Si vale `1`, la respuesta inmediata es **NO (`0`)**. Si vale `0`, pasar al Paso 2.
 2. **Paso 2 (Filtro Franja horaria):** Mirar `Franja horaria`. Si vale `1` (tarde), la respuesta inmediata es **NO (`0`)**. Si vale `0` (mañana), pasar al Paso 3.
 3. **Paso 3 (Umbral de reincidencia):** Mirar `Entregas fallidas previas`. Si es **mayor o igual a 3 (`>= 3`)**, la respuesta es **SÍ (`1`)**. Si es **2 o menos (`<= 2`)**, la respuesta es **NO (`0`)**.
 - *Fórmula equivalente para planilla de cálculo (Google Sheets / Excel):* `=SI(Y(C2>=3; D2=0; E2=0); "SÍ (1)"; "NO (0)")` donde `C` = Entregas fallidas previas, `D` = Respondió WhatsApp y `E` = Franja horaria.
+- *Ejecución reproducible en Python:* Correr `python3 evaluate.py` (o `pytest evaluate.py`) sobre [`evaluate.py`](evaluate.py).
 
 **Dos casos de ejemplo.**
 
@@ -134,9 +138,15 @@ En la logística de última milla de la ficha `T20`, **el error más caro es el 
 Al analizar los datos de entrenamiento (Casos 1 a 14) para las entregas matutinas sin respuesta de WhatsApp (`WhatsApp = 0` y `Franja = 0`), observamos que:
 - Con `0, 1 y 2` entregas fallidas previas (Casos 7, 3 y 5), el resultado real es `0 (NO)`.
 - Con `4 y 5` entregas fallidas previas (Casos 1 y 6), el resultado real es `1 (SÍ)`.
-- El valor intermedio **`Entregas fallidas previas = 3` con `WhatsApp = 0` y `Franja = 0`** no aparece en el entrenamiento (es una **zona gris** entre 2 y 4).
+- **¿Qué pasa con el caso `(Entregas fallidas previas = 3, WhatsApp = 0, Franja = 0)`?** Nuestra regla (`Entregas fallidas previas >= 3`) predice **SÍ (`1`)**, pero **no existe ningún caso en entrenamiento (1–14) ni en prueba (15–20) con la combinación `(3, 0, 0)` que confirme o refute empíricamente esa predicción** (en el dataset solo aparecen `(3, 1, 1)` en el Caso 13, `(3, 0, 1)` en los Casos 15 y 20, y `(3, 1, 0)` en el Caso 18). Por lo tanto, elegir el corte en `>= 3` en lugar de `>= 4` no surge de un dato observado en la tabla, sino de una **decisión deliberada frente a la incertidumbre en esa zona gris**: como el **Falso Negativo** (viaje perdido) es el error más caro, ante un caso nuevo `(3, 0, 0)` no observado en los datos preferimos reprogramar preventivamente (`SÍ`) en vez de arriesgar el camión.
 
-Inicialmente, un sistema conservador ajustado solo al mínimo de los casos positivos observados habría fijado la regla en `Entregas fallidas previas >= 4`. Sin embargo, con `>= 4`, si llega un caso nuevo con `3 entregas fallidas previas`, que **no respondió el WhatsApp** y va **a la mañana**, el sistema diría `NO` y mandaría el camión, exponiéndose de lleno a un **Falso Negativo (viaje perdido)**. Por eso **cambiamos el umbral de la Regla 1 bajándolo de `>= 4` a `>= 3` entregas fallidas previas**: ante la duda en la zona gris (`3 fallidas, sin WhatsApp, a la mañana`), preferimos reprogramar preventivamente para blindar la **Sensibilidad (0 Falsos Negativos)** sin agregar ningún Falso Positivo en entrenamiento ni en prueba.
+**Análisis de sensibilidad del umbral (`>= 4` vs. `>= 3` vs. `>= 2`) sobre los 20 casos del dataset:**
+
+| Umbral (con `WhatsApp = 0` y `Franja = 0`) | ¿Cambia alguna de las 20 predicciones de `T20.csv`? | Matriz Entrenamiento (1–14) | Matriz Prueba (15–20) | Predicción en caso gris no observado `(3, 0, 0)` |
+|---|---|---|---|---|
+| **`Fallidas >= 4`** *(conservador)* | **No cambia ninguna de las 20 predicciones** respecto de `>= 3` (da los mismos 20 resultados porque en el CSV no hay ningún caso `(3, 0, 0)`). | `VP=2, FN=0, FP=0, VN=12` (100 %) | `VP=1, FN=0, FP=0, VN=5` (100 %) | Predice **NO (`0`)** $\rightarrow$ arriesga el error más caro (**FN**, viaje perdido). |
+| **`Fallidas >= 3`** *(elegido)* | **Línea de referencia (20/20 aciertos).** | `VP=2, FN=0, FP=0, VN=12` (100 %) | `VP=1, FN=0, FP=0, VN=5` (100 %) | Predice **SÍ (`1`)** $\rightarrow$ protege contra el **FN** sin agregar FP en los datos. |
+| **`Fallidas >= 2`** *(agresivo)* | **Sí: cambia 1 de las 20 predicciones.** El **Caso 5 de entrenamiento** (`Fallidas = 2, WhatsApp = 0, Franja = 0`, cuyo valor real es `0`) pasa de `NO (0)` a `SÍ (1)`, convirtiéndose en **1 Falso Positivo**. | `VP=2, FN=0, FP=1, VN=11` (Exactitud = 92,9 %, Precisión = 66,7 %) | `VP=1, FN=0, FP=0, VN=5` (100 %) | Predice **SÍ (`1`)**, pero ya degrada la precisión en entrenamiento al reprogramar al Caso 5. |
 
 ---
 
@@ -153,7 +163,7 @@ Como en entrenamiento hay **12 casos `NO (0)`** y solo **2 casos `SÍ (1)`**, la
 | **¿Qué datos?** | 20 casos sintéticos de la ficha `T20` (`datos/T20.csv`), con división fija e inamovible de **14 casos de entrenamiento** (Casos 1–14, con 2 `SÍ` y 12 `NO`) y **6 casos de prueba** (Casos 15–20, con 1 `SÍ` y 5 `NO`), usando 3 variables conocidas antes del despacho. |
 | **¿Qué métrica?** | **Sensibilidad (Recall)** como métrica prioritaria (por ser el Falso Negativo el error más caro), junto con **Precisión**, **Especificidad** y **Exactitud**, ya que la Exactitud aislada engaña por el fuerte desbalance de clases (85,7 % de negativos). |
 | **¿Comparado contra qué?** | Contra el **clasificador trivial de clase mayoritaria ("decir siempre NO")**, que logra 85,7 % de exactitud en entrenamiento y 83,3 % en prueba pero con **0 % de sensibilidad** (contra 100 % de exactitud y 100 % de sensibilidad de nuestra regla). |
-| **¿Quién lo midió?** | Medido por el propio grupo sobre la partición de prueba retenida (`Casos 15–20`, que no se usó para diseñar la regla) y auditado externamente contra el bot evaluador de la cátedra y la prueba en vivo de la mesa, dejando constancia de que $n = 6$ en prueba es una muestra chica. |
+| **¿Quién lo midió?** | Lo medimos **nosotros mismos (los propios autores del sistema, Pablo Mayadot e Ignacio Sánchez, el 3 de noviembre de 2026)** sobre la partición de prueba retenida (`Casos 15–20`). Según la Clase 6, esto es una **autoevaluación interna** sobre una muestra chica ($n = 6$), no una auditoría independiente de un tercero con datos de producción. |
 
 ---
 
@@ -178,9 +188,10 @@ Aplicamos la cadena completa **Datos $\rightarrow$ Modelo $\rightarrow$ Decisió
 | 2 | Evaluar si convenía descartar alguna de las 3 variables de la ficha `T20` para simplificar todavía más el sistema. | Aceptamos conservar las **3 variables** y documentar con contraejemplos concretos del entrenamiento (Caso 8 para franja horaria, Casos 2/11/14 para WhatsApp y Casos 3/5/7 para fallidas previas) por qué las tres son indispensables y están libres de fuga de datos del futuro. | Rechazamos una regla de solo 2 variables (como mirar únicamente `Entregas fallidas previas >= 4` y `WhatsApp == 0`) porque fallaba en el Caso 8 de entrenamiento (`4, 0, 1 -> 0`), generando un Falso Positivo evitable en el turno tarde. |
 | 3 | Definir el umbral exacto de `Entregas fallidas previas` teniendo en cuenta la brecha entre 2 y 4 fallidas en entrenamiento y el análisis del error más caro (Criterio D). | Aceptamos fijar el umbral en **`Entregas fallidas previas >= 3`** (en lugar de `>= 4`) justificando que el **Falso Negativo** (viaje de camión perdido) es mucho más caro que el Falso Positivo, cubriendo así la zona gris `(3, 0, 0)` sin alterar el 100 % de acierto en entrenamiento ni en prueba. | Rechazamos dejar el umbral en `>= 4` porque nos dejaba desprotegidos frente al error más caro (FN) si en la operación o en la prueba en vivo de la mesa aparecía un cliente con 3 entregas fallidas previas, sin respuesta de WhatsApp y en la franja de la mañana. |
 | 4 | Redactar las secciones de medición, comparación contra línea base trivial, checklist de la Clase 6 y análisis de riesgo completo cuidando la claridad conceptual. | Aceptamos la comparación explícita contra la línea base trivial ("decir siempre NO" = 85,7 % de exactitud en entrenamiento y 83,3 % en prueba, pero 0 % de sensibilidad) y el caso de riesgo sobre sesgo de registro de choferes y brecha digital en WhatsApp. | Rechazamos afirmar que obtener 100 % en prueba garantiza 100 % de éxito en producción real, porque con $n = 6$ casos de prueba sería una exageración sin sustento estadístico (*snake oil*); agregamos explícitamente la advertencia sobre el tamaño de la muestra. |
+| 5 | Incorporar las observaciones de la Corrida 1 del bot evaluador y un script de evaluación en Python con tipado estricto (`evaluate.py`) para verificar la sensibilidad del umbral. | Aceptamos agregar la tabla comparativa de umbrales (`4`, `3` y `2`), corregir la respuesta de "¿Quién lo midió?" y sumar `evaluate.py` con pruebas automáticas sobre `datos/T20.csv`. | Rechazamos alterar la estructura de encabezados del `README.md` requerida por la cátedra para no romper la compatibilidad con el evaluador automático. |
 
 **Corridas contra el evaluador**
 
 | Corrida | Nota | Agujero que encontró | Qué cambiamos |
 |---|---|---|---|
-| 1 | Pendiente de enviar a `@Evaluador_iia_uade_bot` | Se completará con la devolución de la primera corrida | Se registrará el ajuste realizado tras la devolución del bot |
+| 1 | **9,5/10** *(Habilitado para la mesa)* | **Agujero principal:** Preguntó qué predice la regla para `(3, 0, 0)` y si hay algún caso en entrenamiento o prueba que confirme esa predicción. **Otros:** **1)** Preguntó si cambia alguna de las 20 predicciones si el umbral fuera `4` o `2` en vez de `3`, y cuál; **2)** En Criterio E (`0,5/1`), marcó que en *"¿Quién lo midió?"* decíamos que el bot ya lo había auditado cuando todavía no había ocurrido, y pidió completar esta fila de la bitácora. | **1)** En la Sección 4 explicitamos que para `(3, 0, 0)` la regla predice **SÍ (`1`)**, aclarando que **no existe ningún caso `(3, 0, 0)` ni en entrenamiento ni en prueba que lo confirme empíricamente** (es una decisión por asimetría de costos frente al FN). **2)** Sumamos en la Sección 4 la tabla de sensibilidad demostrando que con umbral `4` **no cambia ninguna de las 20 predicciones**, mientras que con umbral `2` **cambia únicamente el Caso 5 de entrenamiento** (`2, 0, 0`, que pasa de VN a FP). **3)** Corregimos *"¿Quién lo midió?"* en la Sección 5 aclarando que fue una **autoevaluación interna de los autores** el 3/11/2026 y registramos esta Corrida 1. |
