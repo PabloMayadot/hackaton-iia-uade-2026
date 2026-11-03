@@ -1,16 +1,19 @@
 """Cost-Sensitive Rule Engine evaluator and test suite for T20 (Last-Mile Logistics).
 
 Usage:
-    python3 evaluate.py
-    pytest evaluate.py
+    uv run python evaluate.py
+    uv run pytest
+    uv run ruff check .
+    uv run mypy evaluate.py
 """
 
 from __future__ import annotations
 
 import csv
 import pathlib
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final, Iterable, Literal
+from typing import Final, Literal
 
 SubsetName = Literal["entrenamiento", "prueba"]
 BinaryLabel = Literal[0, 1]
@@ -66,6 +69,28 @@ class ConfusionMatrix:
         return self.vn / denom if denom else 0.0
 
 
+def _parse_subset(raw: str) -> SubsetName:
+    """Validate and narrow dataset split name without type: ignore."""
+    cleaned = raw.strip()
+    if cleaned == "entrenamiento":
+        return "entrenamiento"
+    if cleaned == "prueba":
+        return "prueba"
+    msg = f"Unexpected subset value: {raw!r}"
+    raise ValueError(msg)
+
+
+def _parse_binary(raw: str) -> BinaryLabel:
+    """Validate and narrow a 0/1 CSV column into a strict BinaryLabel."""
+    val = int(raw)
+    if val == 0:
+        return 0
+    if val == 1:
+        return 1
+    msg = f"Expected binary value (0 or 1), got {raw!r}"
+    raise ValueError(msg)
+
+
 def predict_absent(
     prior_failures: int,
     whatsapp_confirmed: int,
@@ -89,25 +114,18 @@ def load_cases(csv_path: pathlib.Path = DEFAULT_CSV_PATH) -> list[DeliveryCase]:
     with csv_path.open(encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            subset_raw = row["conjunto"].strip()
-            assert subset_raw in ("entrenamiento", "prueba")
-            whatsapp_val: BinaryLabel = (
-                1
-                if int(row["Respondió el aviso por WhatsApp (0 = no, 1 = sí)"]) == 1
-                else 0
-            )
-            slot_val: BinaryLabel = (
-                1 if int(row["Franja horaria (0 = mañana, 1 = tarde)"]) == 1 else 0
-            )
-            actual_val: BinaryLabel = 1 if int(row["resultado_real"]) == 1 else 0
             cases.append(
                 DeliveryCase(
                     case_id=int(row["caso"]),
-                    subset=subset_raw,  # type: ignore[arg-type]
+                    subset=_parse_subset(row["conjunto"]),
                     prior_failures=int(row["Entregas fallidas previas (del cliente)"]),
-                    whatsapp_confirmed=whatsapp_val,
-                    time_slot=slot_val,
-                    actual_absent=actual_val,
+                    whatsapp_confirmed=_parse_binary(
+                        row["Respondió el aviso por WhatsApp (0 = no, 1 = sí)"]
+                    ),
+                    time_slot=_parse_binary(
+                        row["Franja horaria (0 = mañana, 1 = tarde)"]
+                    ),
+                    actual_absent=_parse_binary(row["resultado_real"]),
                 )
             )
     return cases
@@ -145,7 +163,8 @@ def run_self_tests(csv_path: pathlib.Path = DEFAULT_CSV_PATH) -> None:
 
     train_cases = [c for c in all_cases if c.subset == "entrenamiento"]
     test_cases = [c for c in all_cases if c.subset == "prueba"]
-    assert len(train_cases) == 14 and len(test_cases) == 6
+    assert len(train_cases) == 14
+    assert len(test_cases) == 6
 
     # Threshold = 3 (selected cost-sensitive threshold)
     assert evaluate_subset(train_cases, min_failures=3) == ConfusionMatrix(2, 0, 0, 12)
@@ -160,12 +179,15 @@ def run_self_tests(csv_path: pathlib.Path = DEFAULT_CSV_PATH) -> None:
     # Threshold = 2 (flips Case 5 in training from VN to FP -> 13/14 accuracy)
     assert evaluate_subset(train_cases, min_failures=2) == ConfusionMatrix(2, 0, 1, 11)
     case_5 = next(c for c in train_cases if c.case_id == 5)
-    assert predict_absent(
-        case_5.prior_failures,
-        case_5.whatsapp_confirmed,
-        case_5.time_slot,
-        min_failures=2,
-    ) == 1
+    assert (
+        predict_absent(
+            case_5.prior_failures,
+            case_5.whatsapp_confirmed,
+            case_5.time_slot,
+            min_failures=2,
+        )
+        == 1
+    )
 
 
 def test_cost_sensitive_rule_engine() -> None:
@@ -176,11 +198,11 @@ def test_cost_sensitive_rule_engine() -> None:
 if __name__ == "__main__":
     run_self_tests()
     dataset = load_cases()
-    for name in ("entrenamiento", "prueba"):
-        subset = [c for c in dataset if c.subset == name]
+    for split_name in ("entrenamiento", "prueba"):
+        subset = [c for c in dataset if c.subset == split_name]
         cm = evaluate_subset(subset)
         print(
-            f"[{name.upper()}] VP={cm.vp} FN={cm.fn} FP={cm.fp} VN={cm.vn} | "
+            f"[{split_name.upper()}] VP={cm.vp} FN={cm.fn} FP={cm.fp} VN={cm.vn} | "
             f"Acc={cm.accuracy:.1%} Prec={cm.precision:.1%} "
             f"Sens={cm.recall:.1%} Spec={cm.specificity:.1%}"
         )
