@@ -1,6 +1,6 @@
 # T20 · ¿Esta entrega falla por ausente?
 
-**Integrantes:** Integrante 1 (completar nombre y apellido) · Integrante 2 (completar nombre y apellido)
+**Integrantes:** Pablo Mayadot · Ignacio Sánchez
 **IA declarada:** Claude
 **Pista:** Reglas
 **Publicación en LinkedIn:** Pendiente de agregar link al publicar
