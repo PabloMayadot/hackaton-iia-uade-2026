@@ -3,8 +3,7 @@
 **Integrantes:** Pablo Mayadot · Ignacio Sánchez
 **IA declarada:** Claude
 **Pista:** Reglas
-**Publicación en LinkedIn:** Pendiente de agregar link al publicar
-
+**Publicación en LinkedIn:** https://lnkd.in/p/dhdu45p2
 ---
 
 ## 1. Formulación y PEAS
